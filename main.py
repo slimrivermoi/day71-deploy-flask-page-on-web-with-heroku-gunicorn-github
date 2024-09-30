@@ -57,7 +57,7 @@ class BlogPost(db.Model):
     author = relationship("User", back_populates="posts")
 
     # ***************Parent Relationship*************#
-    comments = relationship("Comment", back_populates="parent_post")
+    comments = relationship("Comment", back_populates="parent_post", cascade="all, delete-orphan", passive_deletes=True)
 
 
 # TODO: Create a User table for all your registered users.
@@ -86,7 +86,7 @@ class Comment(db.Model):
     comment_author = relationship("User", back_populates="comments")
 
     # ***************Child Relationship to BlogPost*************#
-    post_id: Mapped[str] = mapped_column(Integer, db.ForeignKey("blog_posts.id"), nullable=False)
+    post_id: Mapped[str] = mapped_column(Integer, db.ForeignKey("blog_posts.id"))
     parent_post = relationship("BlogPost", back_populates="comments")
 
 
