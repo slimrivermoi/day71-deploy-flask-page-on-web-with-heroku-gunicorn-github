@@ -3,18 +3,16 @@ from flask import Flask, request, abort, render_template, redirect, url_for, fla
 from flask_bootstrap import Bootstrap5
 from flask_ckeditor import CKEditor
 from flask_gravatar import Gravatar
-from flask_login import UserMixin, login_user, LoginManager, current_user, logout_user
+from flask_login import UserMixin, login_user, LoginManager, current_user, logout_user, login_required
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import relationship, DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import Integer, String, Text, select, ForeignKey
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
-from forms import CreatePostForm, RegisterForm, LoginForm
-from typing import List
+from forms import CreatePostForm, RegisterForm, LoginForm, CommentForm
 
-EMAIL_ERROR_TEXT = 'The email address does not exist.'
-PASSWORD_ERROR_TEXT = 'Password incorrect.'
-REGISTER_ERROR_TEXT = 'You have already registered with this email address. Please log in instead.'
+LOGIN_ERROR_TEXT = 'You need to log in or register to comment.'
+
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = '8BYkEfBA6O6donzWlSihBXox7C0sKR6b'
@@ -25,6 +23,18 @@ Bootstrap5(app)
 #create Flask-Login Manager
 login_manager = LoginManager()
 login_manager.init_app(app)
+
+
+#TODO: Initialize Gravatar
+gravatar = Gravatar(app,
+                    size=100,
+                    rating='g',
+                    default='retro',
+                    force_default=False,
+                    force_lower=False,
+                    use_ssl=False,
+                    base_url=None)
+
 
 # CREATE DATABASE
 class Base(DeclarativeBase):
@@ -50,6 +60,9 @@ class BlogPost(db.Model):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     img_url: Mapped[str] = mapped_column(String(250), nullable=False)
 
+    # ***************Parent Relationship*************#
+    comments = relationship("Comment", back_populates="parent_post")
+
 
 # TODO: Create a User table for all your registered users.
 class User(UserMixin, db.Model):
@@ -62,6 +75,23 @@ class User(UserMixin, db.Model):
     # This will act like a List of BlogPost objects attached to each User.
     # The "author" refers to the author property in the BlogPost class.
     posts = relationship("BlogPost", back_populates="author")
+    #set up relationship with comment table
+    comments = relationship("Comment", back_populates="comment_author")
+
+#new comment table
+class Comment(db.Model):
+    __tablename__ = "comments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Child relationship:"users.id" The users refers to the tablename of the User class.
+    # "comments" refers to the comments property in the User class.
+    author_id: Mapped[int] = mapped_column(Integer, db.ForeignKey("user_table.id"))
+    comment_author = relationship("User", back_populates="comments")
+
+    # ***************Child Relationship to BlogPost*************#
+    post_id: Mapped[str] = mapped_column(Integer, db.ForeignKey("blog_posts.id"))
+    parent_post = relationship("BlogPost", back_populates="comments")
 
 
 with app.app_context():
@@ -76,7 +106,7 @@ def load_user(user_id: str) -> User | None:
 
 
 
-# TODO: create a decorator
+# TODO: create admin_only decorator
 def admin_only(f):
     @wraps(f)
     def decorated_func(*args, **kwargs):
@@ -99,36 +129,34 @@ def register():
         result = db.session.execute(db.select(User).where(User.email == email_attempt))
         user = result.scalar()
         if user:  # if user is already in the db
-            error = REGISTER_ERROR_TEXT
-            # return redirect(url_for('login'))
-        else:
+            flash("You have already registered with this email address. Please log in instead.")
+            return redirect(url_for('login'))
 
-            # Hashing and salting the password entered by the user
-            hash_and_salted_password = generate_password_hash(
-                request.form.get('password'),
-                method='pbkdf2:sha256',
-                salt_length=8
-            )
+        # Hashing and salting the password entered by the user
+        hash_and_salted_password = generate_password_hash(
+            request.form.get('password'),
+            method='pbkdf2:sha256',
+            salt_length=8
+        )
 
-            # Storing the hashed password in our database
-            new_user = User(email=request.form.get('email'),
-                            password=hash_and_salted_password,
-                            name=request.form.get('name'),
-                            )
-            db.session.add(new_user)
-            db.session.commit()
-            # TODO: Log in and authenticate user after adding details to the db
-            login_user(new_user)
+        # Storing the hashed password in our database
+        new_user = User(email=request.form.get('email'),
+                        password=hash_and_salted_password,
+                        name=request.form.get('name'),
+                        )
+        db.session.add(new_user)
+        db.session.commit()
+        # TODO: Log in and authenticate user after adding details to the db
+        login_user(new_user)
 
-            # Can redirect() and get name from the current_user
-            return redirect(url_for("get_all_posts"))
-    return render_template("register.html", error=error, form=register_form, logged_in=current_user.is_authenticated)
+        # Can redirect() and get name from the current_user
+        return redirect(url_for("get_all_posts"))
+    return render_template("register.html", form=register_form, current_user=current_user)
 
 
 # TODO: Retrieve a user from the database based on their email. 
 @app.route('/login', methods=['GET','POST'])
 def login():
-    error = None
     login_form = LoginForm()
     if login_form.validate_on_submit():
         email_attempt = request.form.get("email")
@@ -138,21 +166,27 @@ def login():
         result = db.session.execute(db.select(User).where(User.email == email_attempt))
         user = result.scalar()
 
-        if user:  # if email address is valid
-            # Check if the password entered is the same as the user's hash password in db
-            if check_password_hash(user.password, password_attempt):
-                login_user(user)
-                return redirect(url_for('get_all_posts'))
-            else:
-                error = PASSWORD_ERROR_TEXT
+        # if email address is invalid
+        if not user:
+            flash("The email address does not exist.")
+            return redirect(url_for('login'))
+
+        #if password incorrect
+        elif not check_password_hash(user.password, password_attempt):
+            flash("Password incorrect, please try again.")
+            return redirect(url_for('login'))
+
         else:
-            error = EMAIL_ERROR_TEXT
-    return render_template('login.html', form=login_form, error=error, logged_in=current_user.is_authenticated)
+            login_user(user)
+            return redirect(url_for('get_all_posts'))
+
+    return render_template('login.html', form=login_form, current_user=current_user)
 
 
 
 @app.route('/logout')
 def logout():
+    logout_user()
     return redirect(url_for('get_all_posts'))
 
 
@@ -160,15 +194,29 @@ def logout():
 def get_all_posts():
     result = db.session.execute(db.select(BlogPost))
     posts = result.scalars().all()
-
-    return render_template("index.html", all_posts=posts)
+    return render_template("index.html", all_posts=posts, current_user=current_user)
 
 
 # TODO: Allow logged-in users to comment on posts
-@app.route("/post/<int:post_id>")
+@app.route("/post/<int:post_id>", methods=["GET", "POST"])
 def show_post(post_id):
     requested_post = db.get_or_404(BlogPost, post_id)
-    return render_template("post.html", post=requested_post, logged_in=current_user.is_authenticated)
+    comment_form = CommentForm()
+
+    if comment_form.validate_on_submit():
+        if not current_user.is_authenticated:
+            flash("You need to login or register to comment.")
+            return redirect(url_for("login"))
+
+        new_comment = Comment(
+            text=comment_form.comment.data,
+            comment_author=current_user,
+            parent_post=requested_post
+        )
+        db.session.add(new_comment)
+        db.session.commit()
+
+    return render_template("post.html", post=requested_post,form=comment_form, current_user=current_user)
 
 
 # TODO: Use a decorator so only an admin user can create a new post
