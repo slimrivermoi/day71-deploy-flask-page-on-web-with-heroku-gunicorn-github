@@ -29,7 +29,7 @@
   <div class="container">
     <div class="row">
       <div class="col-lg-8 col-md-10 mx-auto">
-        <!-- TODO: Add a CKEditor for the new post form below -->
+        <!-- Add a CKEditor for the new post form below -->
         {{ ckeditor.load() }}
         {{ ckeditor.config(name='body') }}
         {{ render_form(form, novalidate=True, button_map={"submit": "primary"}) }}
