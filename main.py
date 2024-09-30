@@ -6,10 +6,11 @@ from flask_gravatar import Gravatar
 from flask_login import UserMixin, login_user, LoginManager, current_user, logout_user
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import relationship, DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Integer, String, Text, select
+from sqlalchemy import Integer, String, Text, select, ForeignKey
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from forms import CreatePostForm, RegisterForm, LoginForm
+from typing import List
 
 EMAIL_ERROR_TEXT = 'The email address does not exist.'
 PASSWORD_ERROR_TEXT = 'Password incorrect.'
@@ -25,11 +26,6 @@ Bootstrap5(app)
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# Creates a user loader callback
-@login_manager.user_loader
-def loader_user(user_id):
-    return db.get_or_404(User, user_id)
-
 # CREATE DATABASE
 class Base(DeclarativeBase):
     pass
@@ -42,11 +38,16 @@ db.init_app(app)
 class BlogPost(db.Model):
     __tablename__ = "blog_posts"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # Create Foreign Key, "users.id" the users refers to the tablename of User.
+    author_id: Mapped[int] = mapped_column(Integer, db.ForeignKey("user_table.id"))
+    # Create reference to the User object. The "posts" refers to the posts property in the User class.
+    author = relationship("User", back_populates="posts")
+
     title: Mapped[str] = mapped_column(String(250), unique=True, nullable=False)
     subtitle: Mapped[str] = mapped_column(String(250), nullable=False)
     date: Mapped[str] = mapped_column(String(250), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    author: Mapped[str] = mapped_column(String(250), nullable=False)
     img_url: Mapped[str] = mapped_column(String(250), nullable=False)
 
 
@@ -58,9 +59,21 @@ class User(UserMixin, db.Model):
     password: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(100))
 
+    # This will act like a List of BlogPost objects attached to each User.
+    # The "author" refers to the author property in the BlogPost class.
+    posts = relationship("BlogPost", back_populates="author")
+
 
 with app.app_context():
     db.create_all()
+
+
+
+# Creates a user loader callback
+@login_manager.user_loader
+def load_user(user_id: str) -> User | None:
+    return User.query.get(int(user_id))
+
 
 
 # TODO: create a decorator
